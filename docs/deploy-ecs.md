@@ -1,36 +1,34 @@
-# 在阿里云 ECS 上部署（2C2G / Ubuntu）
+# 在阿里云 ECS 上部署（2C2G / Ubuntu 18）
 
-目标：让 LogPilot 在一台 2 核 2G 的 Ubuntu 上跑起来。
+目标：让 LogPilot 在一台 2 核 2G、已经装了宝塔的 Ubuntu 上跑起来。
 
-## 为什么不能直接在服务器上 build
+## 先选方案
 
-`docker build` 要跑一遍 Maven 全量编译，2G 内存基本必 OOM。所以推荐：
+| | 方案 A：原生部署（推荐） | 方案 B：Docker |
+|---|---|---|
+| 适合 | 2G 小机器、系统已经跑着别的东西 | 4G 以上、环境干净 |
+| 内存占用 | 低（只多一个 JVM） | 高（Docker 守护进程 + 镜像层） |
+| 服务器要不要装 Maven | 不要（本地打好 jar 传上去） | 不要 |
+| 排障难度 | 低，systemd 日志直接看 | 中 |
 
-- **本地构建镜像** → `docker save` → 传到服务器 → `docker load` → 服务器只负责跑
-- 确需在服务器构建，先加 2G swap，并做好等 15 分钟的准备
+**2C2G 且已装宝塔的机器，选 A。** 宝塔本身已经占掉 800M 左右，再叠 Docker 很容易 OOM。
 
-## 1. 装 Docker
+---
 
-```bash
-curl -fsSL https://get.docker.com | sh -s -- --mirror Aliyun
-sudo systemctl enable --now docker
-```
+# 方案 A：原生部署
 
-Ubuntu 18.04 已 EOL，如果脚本提示不支持的发行版：
+## 0. 先体检
 
-```bash
-curl -fsSL https://get.docker.com | sh -s -- --version 24.0.9
-```
-
-还不行就升级到 Ubuntu 22.04，别在 18.04 上耗。
-
-确认 compose v2 可用：
+在服务器上跑这几条，确认现状：
 
 ```bash
-docker compose version
+free -h                 # 内存
+df -h /                 # 磁盘
+lsb_release -a          # 系统版本
+systemctl status mysql redis-server nginx --no-pager 2>/dev/null | grep -E "●|Active"
 ```
 
-## 2. 加 swap（2G 机器必做）
+## 1. 加 swap（2G 机器必做）
 
 ```bash
 sudo fallocate -l 2G /swapfile
@@ -41,72 +39,140 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 free -h
 ```
 
-## 3. 本地构建并传输镜像
+## 2. 装 JRE 17
 
-本地（有 Docker 的机器）：
-
-```bash
-docker build -t logpilot:0.2 .
-docker save logpilot:0.2 -o logpilot-0.2.tar
-scp logpilot-0.2.tar root@<ECS_IP>:/opt/logpilot/
-```
-
-服务器：
+Ubuntu 18.04 的官方源里没有 JDK 17，用清华镜像下载 Temurin：
 
 ```bash
-cd /opt/logpilot
-docker load -i logpilot-0.2.tar
-docker images | grep logpilot
+cd /tmp
+FILE=$(curl -sSL https://mirrors.tuna.tsinghua.edu.cn/Adoptium/17/jre/x64/linux/ \
+       | grep -o 'OpenJDK17U-jre_x64_linux_hotspot_[0-9._]*\.tar\.gz' | head -1)
+echo "下载 $FILE"
+curl -sSL -o jre17.tar.gz "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/17/jre/x64/linux/$FILE"
+sudo mkdir -p /opt/logpilot
+sudo tar -xzf jre17.tar.gz -C /opt/logpilot
+sudo mv /opt/logpilot/jdk-17* /opt/logpilot/jre
+/opt/logpilot/jre/bin/java -version
 ```
 
-## 4. 启动
+看到 `openjdk version "17.x"` 就对了。
 
-把 `deploy/docker-compose.ecs.yml` 传到服务器同一个目录：
+## 3. 装 MySQL 和 Redis
 
 ```bash
-scp deploy/docker-compose.ecs.yml root@<ECS_IP>:/opt/logpilot/docker-compose.yml
+sudo apt update
+sudo apt install -y mysql-server redis-server
+sudo systemctl enable --now mysql redis-server
 ```
 
-然后：
+> **如果 `apt update` 报 404**：Ubuntu 18.04 已 EOL，官方源被移走了。要么换成阿里云镜像源，
+> 要么把 `/etc/apt/sources.list` 里的 `archive.ubuntu.com` 换成 `old-releases.ubuntu.com`。
+
+**压住 Redis 内存**（2G 机器不设上限会被写满）：
 
 ```bash
-cd /opt/logpilot
-export LLM_API_KEY=sk-xxx     # 不设就走规则模式
-docker compose up -d
-docker compose ps
-docker compose logs -f app
+sudo sed -i 's/^# maxmemory .*/maxmemory 64mb/' /etc/redis/redis.conf
+sudo sed -i 's/^# maxmemory-policy .*/maxmemory-policy allkeys-lru/' /etc/redis/redis.conf
+sudo systemctl restart redis-server
 ```
 
-## 5. 放行端口
+## 4. 建库建用户
+
+```bash
+sudo mysql -e "CREATE DATABASE IF NOT EXISTS logpilot DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+sudo mysql -e "CREATE USER IF NOT EXISTS 'logpilot'@'localhost' IDENTIFIED BY '换成你的强密码';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON logpilot.* TO 'logpilot'@'localhost'; FLUSH PRIVILEGES;"
+```
+
+## 5. 传 jar 上去
+
+**在你本地**（Windows PowerShell）执行：
+
+```powershell
+cd D:\work_space\deepseek_work\logpilot
+build.cmd -DskipTests          # 打出 target\logpilot.jar
+scp target\logpilot.jar root@<服务器IP>:/opt/logpilot/
+scp deploy\systemd\logpilot.service root@<服务器IP>:/tmp/
+scp deploy\logpilot.env.example root@<服务器IP>:/opt/logpilot/logpilot.env
+```
+
+> 服务器没装 ssh 客户端不影响，scp 是本机发起的。
+
+## 6. 配 systemd
+
+服务器上：
+
+```bash
+# 建运行用户
+sudo useradd -r -s /sbin/nologin logpilot 2>/dev/null || true
+sudo chown -R logpilot:logpilot /opt/logpilot
+
+# 改密码（一定要改）
+sudo nano /opt/logpilot/logpilot.env
+sudo chmod 600 /opt/logpilot/logpilot.env
+
+# 装服务
+sudo cp /tmp/logpilot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now logpilot
+```
+
+## 7. 验证
+
+```bash
+sudo systemctl status logpilot --no-pager
+sudo journalctl -u logpilot -n 50 --no-pager
+curl -s localhost:8080/actuator/health
+```
+
+`{"status":"UP"}` 就成功了。
+
+## 8. 放行端口
 
 阿里云控制台 → 安全组 → 入方向 → 添加 `8080/8080`。
 
-**授权对象填你自己的公网 IP，不要填 0.0.0.0/0。** 这个应用没有登录鉴权，暴露到公网等于把日志和 LLM 额度送人。
+**授权对象填你自己的公网 IP，不要填 0.0.0.0/0。** 这个应用没有登录鉴权。
 
-## 6. 验证
+---
+
+# 方案 B：Docker
+
+前置：服务器已装 Docker，且**不要在服务器上 build**（2G 必 OOM）。
 
 ```bash
-curl -s localhost:8080/actuator/health
-# {"status":"UP"}
+# 本地构建（需要本机 Docker 可用）
+docker build -t logpilot:0.2 .
+docker save logpilot:0.2 -o logpilot-0.2.tar
+scp logpilot-0.2.tar root@<服务器IP>:/opt/logpilot/
 
-curl -s -X POST localhost:8080/api/v1/logs \
-  -H 'Content-Type: application/json' \
-  -d '{"lines":["2026-10-26 10:00:00 ERROR [order-service] Connection refused to redis 10.0.0.21:6379"]}'
-# {"saved":1,"skipped":0,"duplicates":0,"templateCount":1}
-
-curl -s -X POST localhost:8080/api/v1/analysis \
-  -H 'Content-Type: application/json' -d '{}'
+# 服务器
+docker load -i logpilot-0.2.tar
+scp deploy/docker-compose.ecs.yml root@<服务器IP>:/opt/logpilot/docker-compose.yml
+docker compose up -d
 ```
 
-浏览器打开 `http://<ECS_IP>:8080` 即可。
+---
 
-## 2C2G 的资源账
+## 附：资源账（2C2G）
 
 | 组件 | 常驻内存 |
 |---|---|
-| MySQL 8（buffer pool 调到 128M） | ~400 MB |
-| Redis | ~10 MB |
-| App（-Xmx512m） | ~400 MB |
-| 系统 + Docker | ~300 MB |
+| 宝塔 + Nginx | ~800 MB（已经在跑） |
+| MySQL 5.7（buffer pool 128M） | ~250 MB |
+| Redis（maxmemory 64M） | ~15 MB |
+| App（-Xmx320m） | ~400 MB |
+| 系统 | ~200 MB |
 
-合计约 1.1–1.3 GB，2G 的机器能跑，但**不要在同一台机器上再跑 Jenkins**。
+合计约 1.6–1.7 GB，**必须开 swap**，并且不要再在这台机器上跑 Jenkins。
+
+## 常见问题
+
+**启动就退出，日志里是 `Communications link failure`**
+MySQL 没起来或密码不对。`sudo systemctl status mysql`，再核对 `logpilot.env`。
+
+**`Address already in use: 8080`**
+宝塔或其他服务占了端口。改 `logpilot.env` 加 `SERVER_PORT=8081`，
+或在 systemd 里加 `Environment=SERVER_PORT=8081`。
+
+**页面能开但接口 500**
+看 `journalctl -u logpilot`，多半是数据库连不上或表还没建（首次启动会自动建表）。

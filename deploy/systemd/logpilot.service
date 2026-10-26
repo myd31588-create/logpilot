@@ -1,0 +1,28 @@
+[Unit]
+Description=LogPilot log root-cause analysis
+Documentation=https://github.com/myd31588-create/logpilot
+After=network-online.target mysql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=logpilot
+Group=logpilot
+WorkingDirectory=/opt/logpilot
+EnvironmentFile=/opt/logpilot/logpilot.env
+
+# 2C2G 机器：堆别开大，留内存给 MySQL
+ExecStart=/opt/logpilot/jre/bin/java -Xms128m -Xmx320m -Dfile.encoding=UTF-8 -jar /opt/logpilot/logpilot.jar
+
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+
+# 基础加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
