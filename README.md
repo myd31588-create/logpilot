@@ -238,6 +238,8 @@ kubectl port-forward svc/logpilot 8080:80
 **Deployment 固定 1 副本**，因为 Drain 的模板状态在 JVM 内存里，多副本会各算各的。
 要水平扩展，得先把状态外置到 Redis（v0.3）。**宁可部署得保守，也不要一个看起来能扩展、结果却不对的系统。**
 
+部署到真实 Linux 服务器（2C2G 也能跑）见 [docs/deploy-ecs.md](docs/deploy-ecs.md)。
+
 ---
 
 ## 切 MySQL
@@ -253,8 +255,10 @@ mvn spring-boot:run -Dspring-boot.run.profiles=mysql
 
 - [x] v0.1 采集 + 聚类 + 规则归因
 - [x] v0.2 LLM 归因（可插拔、可降级）
-- [ ] v0.3 Redis 去重、RocketMQ 异步管道、多服务聚合
-- [ ] v0.4 告警通道、K8s 部署清单
+- [x] v0.2 Redis 去重 / 任务锁 / 结果缓存
+- [x] v0.2 Docker 多阶段构建 + K8s 清单
+- [ ] v0.3 RocketMQ 异步管道、模板状态外置（支持水平扩展）
+- [ ] v0.4 告警通道（钉钉 / 企微）
 - [ ] v0.5 前端重写（Vue3）、多租户
 
 ---
@@ -262,13 +266,20 @@ mvn spring-boot:run -Dspring-boot.run.profiles=mysql
 ## 目录
 
 ```
-src/main/java/com/logpilot/
-├── engine/      Drain 模板提取、脱敏、规则引擎（纯 Java，无框架依赖）
-├── service/     入库、分析
-├── domain/      JPA 实体
-├── repo/        仓储
-├── web/         REST + 页面
-└── config/      Bean 装配
+├── src/main/java/com/logpilot/
+│   ├── engine/   Drain 模板提取、脱敏、规则引擎（纯 Java，无框架依赖）
+│   ├── llm/      LLM 调用、Prompt 构造、降级模型
+│   ├── cache/    Redis 封装（熔断降级）、日志指纹
+│   ├── service/  入库、分析
+│   ├── domain/   JPA 实体
+│   ├── repo/     仓储
+│   ├── web/      REST + 页面
+│   └── config/   Bean 装配
+├── k8s/          部署清单
+├── deploy/       服务器用 compose（只跑镜像，不构建）
+├── docs/         部署文档
+├── tools/        本地联调用的假 LLM / 假 Redis
+└── samples/      样例日志
 ```
 
 `engine` 包刻意不依赖 Spring —— 便于单测，也便于以后抽成独立库。
