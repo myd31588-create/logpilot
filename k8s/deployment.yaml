@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logpilot
+  labels:
+    app: logpilot
+spec:
+  # 注意：v0.2 的日志模板状态在 JVM 内存里（Drain 提取器），多副本会各算各的，
+  # 导致同一个服务在不同 Pod 上模板不一致。所以这里固定 1 副本。
+  # v0.3 把模板状态外置到 Redis 之后，才能把副本数调大并上 HPA。
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logpilot
+  template:
+    metadata:
+      labels:
+        app: logpilot
+    spec:
+      containers:
+        - name: logpilot
+          image: logpilot:0.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: logpilot-config
+            - secretRef:
+                name: logpilot-secret
+                optional: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logpilot
+  labels:
+    app: logpilot
+spec:
+  type: ClusterIP
+  selector:
+    app: logpilot
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

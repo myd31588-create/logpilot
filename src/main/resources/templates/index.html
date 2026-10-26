@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LogPilot · 日志根因分析</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            background: #f5f7fa;
+            color: #1f2329;
+        }
+        header {
+            background: #1f4e79;
+            color: #fff;
+            padding: 18px 28px;
+        }
+        header h1 { margin: 0; font-size: 20px; letter-spacing: 1px; }
+        header p { margin: 4px 0 0; font-size: 13px; opacity: .8; }
+        main {
+            max-width: 1080px;
+            margin: 20px auto 60px;
+            padding: 0 16px;
+            display: grid;
+            gap: 16px;
+        }
+        .panel {
+            background: #fff;
+            border: 1px solid #e5e8ef;
+            border-radius: 8px;
+            padding: 16px 18px;
+        }
+        .panel h2 {
+            margin: 0 0 12px;
+            font-size: 15px;
+            color: #1f4e79;
+            border-left: 3px solid #1f4e79;
+            padding-left: 8px;
+        }
+        textarea {
+            width: 100%;
+            font-family: Consolas, Menlo, monospace;
+            font-size: 12px;
+            border: 1px solid #d9dde6;
+            border-radius: 6px;
+            padding: 10px;
+            resize: vertical;
+        }
+        button {
+            margin-top: 10px;
+            background: #1f4e79;
+            color: #fff;
+            border: 0;
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        button:hover { background: #16395a; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eef0f4; vertical-align: top; }
+        th { color: #6b7280; font-weight: 600; background: #fafbfc; }
+        .mono { font-family: Consolas, Menlo, monospace; font-size: 12px; word-break: break-all; }
+        .msg { margin-top: 10px; font-size: 13px; color: #0a7b3e; }
+        .hint { font-size: 12px; color: #6b7280; margin: 8px 0 0; }
+        .badge {
+            display: inline-block;
+            background: #fff4e5;
+            color: #b26a00;
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 11px;
+            margin-left: 6px;
+        }
+        .badge-llm { background: #e8f0fe; color: #1f4e79; }
+        .badge-warn { background: #fdecea; color: #c62828; }
+        .sev { font-weight: 600; }
+        .sev-CRITICAL { color: #c62828; }
+        .sev-MAJOR { color: #ef6c00; }
+        .sev-MINOR { color: #6b7280; }
+        ul { margin: 6px 0 0 18px; padding: 0; font-size: 13px; line-height: 1.9; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>LogPilot</h1>
+    <p>日志聚类 → 规则归因 → （v0.2）LLM 根因分析</p>
+</header>
+
+<main>
+    <section class="panel">
+        <h2>灌日志</h2>
+        <form method="post" action="/ingest">
+            <textarea name="text" rows="8"
+                      placeholder="每行一条，例如：
+2026-10-24 20:00:01 ERROR [order-service] Connection to 10.0.0.11:8080 failed after 3000ms"></textarea>
+            <button type="submit">入库并聚类</button>
+        </form>
+        <div class="msg" th:if="${message}" th:text="${message}"></div>
+        <p class="hint">当前共 <b th:text="${total}">0</b> 条日志
+            <span class="badge badge-llm" th:if="${dedupActive}">Redis 去重已启用</span>
+            <span class="badge" th:unless="${dedupActive}">Redis 未连接 · 去重关闭</span>
+        </p>
+    </section>
+
+    <section class="panel">
+        <h2>根因分析</h2>
+        <form method="post" action="/analyze">
+            <button type="submit">开始分析</button>
+        </form>
+
+        <div th:if="${report != null}" style="margin-top:14px">
+            <p style="font-size:14px;margin:0 0 8px">
+                <b>根因：</b><span th:text="${report.rootCause}"></span>
+                <span class="badge" th:if="${report.degraded}"
+                      th:text="'规则模式 · ' + (${report.degradedReason} ?: 'LLM 未启用')"></span>
+                <span class="badge badge-llm" th:unless="${report.degraded}"
+                      th:text="'LLM · ' + ${report.llmModel}"></span>
+                <span class="badge badge-warn" th:if="${report.needHuman}">建议人工复核</span>
+            </p>
+            <p class="hint" style="margin:0 0 10px">
+                置信度 <b th:text="${report.confidence}"></b> ·
+                模板 <b th:text="${report.templateCount}"></b> 个 ·
+                日志 <b th:text="${report.totalLogs}"></b> 条
+            </p>
+
+            <div th:if="${not #lists.isEmpty(report.hits)}">
+                <p style="font-size:13px;color:#6b7280;margin:10px 0 4px">命中规则</p>
+                <ul>
+                    <li th:each="h : ${report.hits}">
+                        <span class="sev" th:classappend="'sev-' + ${h.severity}" th:text="${h.severity}"></span>
+                        <span th:text="' · ' + ${h.name} + '（' + ${h.code} + '）：' + ${h.suggestion}"></span>
+                    </li>
+                </ul>
+            </div>
+
+            <div th:if="${not #lists.isEmpty(report.evidence)}">
+                <p style="font-size:13px;color:#6b7280;margin:10px 0 4px">证据</p>
+                <ul>
+                    <li class="mono" th:each="e : ${report.evidence}" th:text="${e}"></li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>模板（Top 50）</h2>
+        <table>
+            <thead>
+            <tr>
+                <th style="width:70px">次数</th>
+                <th>模板</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="t : ${templates}">
+                <td th:text="${t.cnt}"></td>
+                <td class="mono" th:text="${t.template}"></td>
+            </tr>
+            </tbody>
+        </table>
+        <p class="hint" th:if="${#lists.isEmpty(templates)}">还没有数据，先在上面灌几条日志</p>
+    </section>
+
+    <section class="panel">
+        <h2>最近日志</h2>
+        <table>
+            <thead>
+            <tr>
+                <th style="width:120px">时间</th>
+                <th style="width:70px">级别</th>
+                <th style="width:130px">服务</th>
+                <th>内容</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="e : ${recent}">
+                <td th:text="${e.timeText}"></td>
+                <td th:text="${e.level}"></td>
+                <td th:text="${e.service}"></td>
+                <td class="mono" th:text="${e.content}"></td>
+            </tr>
+            </tbody>
+        </table>
+        <p class="hint" th:if="${#lists.isEmpty(recent)}">暂无</p>
+    </section>
+</main>
+</body>
+</html>

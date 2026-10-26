@@ -1,0 +1,72 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: logpilot
+  data:
+    redis:
+      # 没装 Redis 也能跑：连接失败会自动降级（去重关闭、锁退化为不做互斥、缓存不生效）
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 1s
+      connect-timeout: 1s
+  datasource:
+    # 默认内存库：零依赖、重启即清空，适合开发和演示。
+    # 需要持久化时用 mysql profile（docker compose up -d mysql 后加 --spring.profiles.active=mysql）；
+    # 也可以改用文件库：jdbc:h2:file:./data/logpilot;MODE=MySQL;DB_CLOSE_DELAY=-1
+    # 注意：文件库在进程被强杀后可能被锁成只读，开发期不建议用。
+    url: jdbc:h2:mem:logpilot;MODE=MySQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+  h2:
+    console:
+      enabled: true
+      path: /h2
+  thymeleaf:
+    cache: false
+    encoding: UTF-8
+
+logging:
+  level:
+    root: info
+    com.logpilot: debug
+
+# LLM 归因（v0.2）。没有 api-key 时自动跳过，报告标记 degraded=true，只出规则结论。
+# 通过环境变量注入，不要写进仓库：$env:LLM_API_KEY="sk-xxx"
+logpilot:
+  # 日志指纹去重窗口：同一服务+级别+内容的日志，在该窗口内只入库一次
+  dedup:
+    window-seconds: 60
+  llm:
+    enabled: true
+    api-key: ${LLM_API_KEY:}
+    base-url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    timeout-seconds: 8
+    max-templates: 12
+    temperature: 0.2
+    # 相同模板快照的 LLM 结论缓存时长，避免反复点"分析"重复烧 token
+    cache-seconds: 30
+
+# 健康检查：K8s 探针和 docker healthcheck 都打这里
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+  health:
+    # Redis 是可选依赖，挂掉不应该让整个实例被判死
+    redis:
+      enabled: false

@@ -1,0 +1,16 @@
+target/
+data/
+out/
+.m2repo/
+
+# 运行日志忽略，但样例日志要进仓库（README 让用户粘它）
+*.log
+!samples/*.log
+
+.idea/
+*.iml
+.DS_Store
+
+# 本地密钥，别提交
+k8s/secret.yaml
+.env

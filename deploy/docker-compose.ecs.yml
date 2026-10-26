@@ -1,0 +1,53 @@
+# 服务器部署用：只跑镜像，不在这里构建。
+# 用法见 docs/deploy-ecs.md
+services:
+  app:
+    image: logpilot:0.2
+    container_name: logpilot-app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: mysql
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    container_name: logpilot-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: logpilot
+      MYSQL_USER: logpilot
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-logpilot}
+      TZ: Asia/Shanghai
+    # 2G 机器必须压住 buffer pool，默认 128M 会吃掉一半内存
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=128M
+      --performance-schema=OFF
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: logpilot-redis
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mysql_data:
+  redis_data:

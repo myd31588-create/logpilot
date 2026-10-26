@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logpilot-config
+  labels:
+    app: logpilot
+data:
+  SPRING_PROFILES_ACTIVE: "mysql"
+  MYSQL_HOST: "mysql"
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: "logpilot"
+  MYSQL_USER: "logpilot"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m -Dfile.encoding=UTF-8"

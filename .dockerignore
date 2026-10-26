@@ -1,0 +1,11 @@
+target/
+data/
+.idea/
+*.iml
+*.log
+.git/
+.m2repo/
+tools/
+build.cmd
+run.cmd
+debug.cmd
