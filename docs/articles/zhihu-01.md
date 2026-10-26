@@ -156,7 +156,7 @@ grep "ERROR" app.log | tail -100
 
 项目叫 LogPilot，Java 17 + Spring Boot 3，Drain 聚类 + 规则引擎 + LLM 归因，Docker 一键起，15 个测试。
 
-**没有 API Key 也能完整演示**——我在仓库里放了假的 LLM 服务和假的 Redis，面试或者给别人演示的时候不用花钱、不用联网。
+**没有 API Key 也能完整演示**——我在仓库里放了假的 LLM 服务和假的 Redis，演示的时候不用花钱、不用联网。
 
 仓库地址在评论区置顶（知乎对外链有限制，见谅）。
 

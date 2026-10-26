@@ -179,7 +179,7 @@ python tools/fake-llm.py
 java -jar target/logpilot.jar --logpilot.llm.base-url=http://127.0.0.1:9099/v1 --logpilot.llm.api-key=test
 ```
 
-这样面试时即使没有 key、没有网，也能演示完整的 LLM 归因链路。
+这样即使没有 key、没有网络，也能演示完整的 LLM 归因链路。
 
 ---
 
