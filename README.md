@@ -1,9 +1,14 @@
 # LogPilot · 日志根因分析
 
+[![CI](https://github.com/myd31588-create/logpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/myd31588-create/logpilot/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Java](https://img.shields.io/badge/Java-17-orange.svg)](pom.xml)
+
 > 把百万条日志压成几十个模板，再用规则 + LLM 找出根因。
 > 面向中小团队，单机可跑，私有化部署。
 
-**当前版本 v0.1**：采集 → 聚类 → 规则归因 → 页面展示。LLM 在 v0.2 接入。
+**v0.2**：采集 → 指纹去重 → Drain 聚类 → 规则归因 → LLM 增强 → 页面展示。
+Redis 承担去重 / 任务锁 / 结果缓存，三者均可降级；支持 Docker 与 K8s 部署。
 
 ---
 
